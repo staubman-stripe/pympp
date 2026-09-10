@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
 
 from mpp import PAYMENT_AUTHORIZATION_HEADER, Challenge, Credential, Receipt
 from mpp._parsing import ParseError, _b64_decode, _parse_timestamp
@@ -40,7 +40,7 @@ from mpp.server.decorator import (
 from mpp.server.intent import Validation
 from mpp.server.intent import broadcast_credential as broadcast_intent_credential
 from mpp.server.intent import validate_credential as validate_intent_credential
-from mpp.server.method import _SupportsPaymentSuccess, transform_request
+from mpp.server.method import _SupportsPaymentSuccess, prepare_intent, transform_request
 from mpp.server.verify import (
     _authenticate_echo,
     _body_digest_error,
@@ -167,6 +167,10 @@ class Mpp:
         handler = method.on_payment_success if isinstance(method, _SupportsPaymentSuccess) else None
         if handler is None:
             return
+        # Some methods handle their built-in callback inside a prepared intent.
+        # Keep the callable available without registering it a second time.
+        if handler is getattr(method, "_handled_payment_success_callback", None):
+            return
         if not callable(handler):
             raise ValueError("on_payment_success must be callable")
 
@@ -185,6 +189,7 @@ class Mpp:
         request: dict[str, Any] | None,
         meta: dict[str, str] | None = _CONTEXT_UNSET,
         body: str | bytes | dict[str, Any] | None = _CONTEXT_UNSET,
+        method_options: Mapping[str, Any] | None = None,
     ) -> tuple[Credential, Method, Intent | VerifiableIntent, dict[str, Any], Challenge]:
         """Authenticate and resolve a credential outside an HTTP route."""
         credential = self._parse_credential(value)
@@ -234,6 +239,9 @@ class Mpp:
         intent_obj = method.intents.get(echo.intent)
         if intent_obj is None:
             raise PaymentMethodUnsupportedError(f"{echo.method}/{echo.intent}")
+        intent_obj, remaining = prepare_intent(method, intent_obj, method_options or {})
+        if remaining:
+            raise TypeError(f"unsupported method option: {next(iter(remaining))}")
         challenge = _challenge_from_echo(echo, echoed_request, echoed_opaque)
         return credential, method, intent_obj, echoed_request, challenge
 
@@ -255,6 +263,7 @@ class Mpp:
         request: dict[str, Any] | None = None,
         meta: dict[str, str] | None = _CONTEXT_UNSET,
         body: str | bytes | dict[str, Any] | None = _CONTEXT_UNSET,
+        **method_options: Any,
     ) -> Validation:
         """Validate a bound credential without consuming payment state.
 
@@ -297,6 +306,7 @@ class Mpp:
             request=request,
             meta=meta,
             body=body,
+            method_options=method_options,
         )
         return await validate_intent_credential(
             intent=intent_obj,
@@ -312,6 +322,7 @@ class Mpp:
         request: dict[str, Any] | None = None,
         meta: dict[str, str] | None = _CONTEXT_UNSET,
         body: str | bytes | dict[str, Any] | None = _CONTEXT_UNSET,
+        **method_options: Any,
     ) -> Receipt:
         """Revalidate and perform a bound credential's terminal operation.
 
@@ -349,6 +360,7 @@ class Mpp:
                 request=request,
                 meta=meta,
                 body=body,
+                method_options=method_options,
             )
         except Exception as error:
             echo = parsed.challenge
@@ -508,6 +520,7 @@ class Mpp:
         extra: dict[str, str] | None = None,
         body: str | bytes | dict[str, Any] | None = None,
         payment_authorization: str | None = None,
+        **method_options: Any,
     ) -> Challenge | ComposedResult:
         """Handle a charge intent.
 
@@ -538,7 +551,7 @@ class Mpp:
         methods = [method for method in self.methods if "charge" in method.intents]
         if not methods:
             raise ValueError(f"Method {self.method.name} does not support charge intent")
-        options: ComposeOptions = {
+        options: dict[str, Any] = {
             "amount": amount,
             "currency": currency,
             "recipient": recipient,
@@ -549,10 +562,11 @@ class Mpp:
             "fee_payer": fee_payer,
             "chain_id": chain_id,
             "extra": extra,
+            **method_options,
         }
         if self._compose_implicit_methods:
             result = await self.compose(
-                *((method, options) for method in methods),
+                *((method, cast(ComposeOptions, options)) for method in methods),
                 body=body,
             ).verify(self.payment_credential_value(authorization, payment_authorization))
             if len(methods) == 1 and isinstance(result, ComposedChallenges):
@@ -588,6 +602,7 @@ class Mpp:
         chain_id: int | None = None,
         extra: dict[str, str] | None = None,
         body: BodyParamsType = None,
+        **method_options: Any,
     ) -> Callable[  # noqa: UP047
         [Callable[[Any, Credential, Receipt], Awaitable[R]]],
         Callable[[Any], Awaitable[R | Any]],
@@ -629,7 +644,7 @@ class Mpp:
         methods = [method for method in self.methods if intent in method.intents]
         if not methods:
             raise ValueError(f"Method {self.method.name} does not support {intent} intent")
-        options: ComposeOptions = {
+        options: dict[str, Any] = {
             "amount": amount,
             "currency": currency,
             "recipient": recipient,
@@ -637,10 +652,11 @@ class Mpp:
             "expires_in": expires_in,
             "chain_id": chain_id,
             "extra": extra,
+            **method_options,
         }
         if self._compose_implicit_methods:
             return self.compose(
-                *((f"{method.name}/{intent}", options) for method in methods),
+                *((f"{method.name}/{intent}", cast(ComposeOptions, options)) for method in methods),
                 body=body,
             )
 
@@ -688,6 +704,12 @@ class Mpp:
     ) -> tuple[Intent | VerifiableIntent, dict[str, Any], str | None]:
         """Build the canonical request shared by one configured payment offer."""
         intent = method.intents[intent_name]
+        intent, options = prepare_intent(method, intent, options)
+        from mpp.server.compose import _OPTION_KEYS
+
+        unknown = options.keys() - _OPTION_KEYS
+        if unknown:
+            raise TypeError(f"unsupported {api_name} option: {sorted(unknown)[0]}")
         currency = options.get("currency") or getattr(method, "currency", None)
         recipient = options.get("recipient") or getattr(method, "recipient", None)
         if not currency:

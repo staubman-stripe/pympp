@@ -43,5 +43,8 @@ from mpp.methods.stripe.intents import ChargeIntent as ChargeIntent
 from mpp.methods.stripe.machine_payments import DepositAddresses as DepositAddresses
 from mpp.methods.stripe.machine_payments import MachinePayments as MachinePayments
 from mpp.methods.stripe.machine_payments import create as create
+from mpp.methods.stripe.payment_intent_options import PaymentIntentContext as PaymentIntentContext
+from mpp.methods.stripe.payment_intent_options import PaymentIntentInput as PaymentIntentInput
+from mpp.methods.stripe.payment_intent_options import PaymentIntentOptions as PaymentIntentOptions
 from mpp.methods.stripe.schemas import ChargeRequest as ChargeRequest
 from mpp.methods.stripe.schemas import StripeCredentialPayload as StripeCredentialPayload

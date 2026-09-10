@@ -78,6 +78,39 @@ transport = PaymentTransport(runtime=payments)
 
 ## Examples
 
+Stripe charge and composed-offer inputs accept `payment_intent_options` as a
+mapping or a sync/async callable receiving `PaymentIntentContext`. The supported
+fields are `customer`, `receipt_email`, `metadata`, and
+`hooks.inputs.tax.calculation`. The input stays out of the signed challenge.
+Resolvers run in the terminal payment operation, after available credential
+validation; `validate_credential()` never invokes them.
+
+```python
+async def options(context):
+    return {"metadata": {"order_id": "order_123"}}
+
+
+result = await server.charge(
+    authorization,
+    "0.50",
+    payment_intent_options=options,
+)
+# Also supported in compose offer mappings and server.pay(...).
+```
+
+Both Stripe rails include SDK/challenge analytics. Existing configured metadata
+retains its precedence, including the forced `machine_payment="true"` flag;
+the new options' metadata overrides all generated/configured metadata. Crypto
+recording retries a definitive optional-field rejection once without optional
+fields, and remains best-effort after settlement.
+
+Custom methods may implement the optional
+`prepare_intent(intent, input) -> (intent, request_input)` hook to consume private
+method-specific input before request construction. Return an isolated intent
+view; never mutate a shared intent or execute deferred work during preparation.
+Unconsumed unknown offer options are still rejected. Existing methods need no
+changes, and the intent verification signatures and event payloads are unchanged.
+
 | Example | Description |
 |---------|-------------|
 | [api-server](./examples/api-server/) | Payment-gated API server |

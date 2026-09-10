@@ -18,20 +18,9 @@ from mpp.errors import (
     PaymentExpiredError,
     VerificationFailedError,
 )
+from mpp.methods.stripe.analytics import merge_metadata
+from mpp.methods.stripe.payment_intent_options import PaymentIntentInput, resolve_options
 from mpp.methods.stripe.schemas import ChargeRequest, StripeCredentialPayload
-
-
-def _build_analytics(credential: Credential) -> dict[str, str]:
-    """Build MPP analytics metadata for the Stripe PaymentIntent."""
-    challenge = credential.challenge
-    analytics: dict[str, str] = {
-        "mpp_challenge_id": challenge.id,
-        "mpp_intent": challenge.intent,
-        "mpp_server_id": challenge.realm,
-    }
-    if credential.source:
-        analytics["mpp_client_id"] = credential.source
-    return analytics
 
 
 def _resolve_payment_intents(client: Any) -> Any:
@@ -166,6 +155,14 @@ class ChargeIntent:
             PaymentExpiredError: If the challenge has expired.
             PaymentActionRequiredError: If 3DS or other action is needed.
         """
+        return await self._verify(credential, request, None)
+
+    def with_payment_intent_options(self, options: PaymentIntentInput) -> _PreparedChargeIntent:
+        return _PreparedChargeIntent(self, options)
+
+    async def _verify(
+        self, credential: Credential, request: dict[str, Any], options_input: PaymentIntentInput
+    ) -> Receipt:
         challenge = credential.challenge
 
         if challenge.expires:
@@ -187,13 +184,12 @@ class ChargeIntent:
             ) from err
 
         spt = parsed.spt
+        if not spt.strip():
+            raise VerificationFailedError("Invalid credential payload: empty spt")
 
         user_metadata = parsed_request.methodDetails.metadata
-        resolved_metadata = {
-            **_build_analytics(credential),
-            **(user_metadata or {}),
-            "machine_payment": "true",
-        }
+        payment_options = await resolve_options(options_input, credential, request)
+        resolved_metadata = merge_metadata(credential, user_metadata, payment_options)
 
         if self._client is not None:
             pi = await self._create_with_client(
@@ -202,6 +198,7 @@ class ChargeIntent:
                 request=parsed_request,
                 spt=spt,
                 metadata=resolved_metadata,
+                payment_options=payment_options,
             )
         else:
             pi = await self._create_with_secret_key(
@@ -210,6 +207,7 @@ class ChargeIntent:
                 request=parsed_request,
                 spt=spt,
                 metadata=resolved_metadata,
+                payment_options=payment_options,
             )
 
         if pi["replayed"]:
@@ -232,10 +230,12 @@ class ChargeIntent:
         request: ChargeRequest,
         spt: str,
         metadata: dict[str, str],
+        payment_options: dict[str, Any],
     ) -> dict[str, Any]:
         """Create a PaymentIntent using the Stripe SDK client."""
         try:
             body = {
+                **{k: v for k, v in payment_options.items() if k != "metadata"},
                 "amount": int(request.amount),
                 "confirm": True,
                 "currency": request.currency,
@@ -267,6 +267,7 @@ class ChargeIntent:
         request: ChargeRequest,
         spt: str,
         metadata: dict[str, str],
+        payment_options: dict[str, Any],
     ) -> dict[str, Any]:
         """Create a PaymentIntent using raw HTTP with a secret key."""
         http_client = await self._get_http_client()
@@ -283,6 +284,13 @@ class ChargeIntent:
             body[f"payment_method_types[{index}]"] = payment_method_type
         for key, value in metadata.items():
             body[f"metadata[{key}]"] = value
+        for key in ("customer", "receipt_email"):
+            if key in payment_options:
+                body[key] = payment_options[key]
+        if "hooks" in payment_options:
+            body["hooks[inputs][tax][calculation]"] = payment_options["hooks"]["inputs"]["tax"][
+                "calculation"
+            ]
 
         response = await http_client.post(
             f"{stripe_defaults.STRIPE_API_BASE}/payment_intents",
@@ -313,3 +321,16 @@ class ChargeIntent:
             "status": result["status"],
             "replayed": _is_idempotent_replay(response.headers),
         }
+
+
+class _PreparedChargeIntent:
+    """An SPT attempt sharing its owner's client and resource lifecycle."""
+
+    name = "charge"
+
+    def __init__(self, owner: ChargeIntent, options: PaymentIntentInput) -> None:
+        self._owner = owner
+        self._options = options
+
+    async def verify(self, credential: Credential, request: dict[str, Any]) -> Receipt:
+        return await self._owner._verify(credential, request, self._options)

@@ -92,3 +92,23 @@ def transform_request(
     if hasattr(method, "transform_request"):
         return method.transform_request(request, credential)  # type: ignore[union-attr]
     return request
+
+
+def prepare_intent(
+    method: Method,
+    intent: Intent | VerifiableIntent,
+    input: Mapping[str, Any],
+) -> tuple[Intent | VerifiableIntent, dict[str, Any]]:
+    """Bind private method input to an isolated intent before request construction.
+
+    Optional method hooks must only prepare input, never execute deferred work.
+    Existing methods need not implement this hook. Neither the caller's mapping
+    nor the shared method/intent may be mutated by a hook.
+    """
+    hook = getattr(method, "prepare_intent", None)
+    if hook is None:
+        return intent, dict(input)
+    prepared = hook(intent, dict(input))
+    if not isinstance(prepared, tuple) or len(prepared) != 2 or not isinstance(prepared[1], dict):
+        raise TypeError("prepare_intent must return (intent, request_input)")
+    return prepared

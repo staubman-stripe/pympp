@@ -190,6 +190,7 @@ async def test_tempo_hook_records_verified_payment_and_metadata(
     assert options == {
         "headers": {"X-Request-Source": stripe_defaults.STRIPE_REQUEST_SOURCE},
         "idempotency_key": "0x15000",
+        "max_network_retries": 0,
         "stripe_version": stripe_defaults.MACHINE_PAYMENTS_API_VERSION,
     }
 
@@ -202,4 +203,4 @@ async def test_tempo_recording_is_best_effort(caplog: pytest.LogCaptureFixture) 
 
     await cast(Any, handler)(success_payload("0xfailure", 10_000))
 
-    assert "Tempo PI recording failed" in caplog.text and "0xfailure" in caplog.text
+    assert "failed to record crypto payment" in caplog.text and "0xfailure" in caplog.text

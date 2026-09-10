@@ -79,6 +79,19 @@ class StripeMethod:
         """Available intents for this method."""
         return self._intents
 
+    def prepare_intent(
+        self, intent: Intent | VerifiableIntent, input: dict[str, Any]
+    ) -> tuple[Intent | VerifiableIntent, dict[str, Any]]:
+        from mpp.methods.stripe.intents import ChargeIntent
+        from mpp.methods.stripe.payment_intent_options import prepare_options
+
+        if "payment_intent_options" not in input:
+            return intent, input
+        if not isinstance(intent, ChargeIntent):
+            raise TypeError("payment_intent_options requires Stripe ChargeIntent")
+        options = prepare_options(input.pop("payment_intent_options"))
+        return intent.with_payment_intent_options(options), input
+
     def transform_request(
         self, request: dict[str, Any], credential: CredentialType | None
     ) -> dict[str, Any]:

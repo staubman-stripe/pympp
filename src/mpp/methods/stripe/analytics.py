@@ -1,0 +1,34 @@
+"""Shared Stripe analytics and backward-compatible metadata merging."""
+
+from importlib.metadata import version
+
+from mpp import Credential
+
+
+def build_analytics(credential: Credential) -> dict[str, str]:
+    challenge = credential.challenge
+    metadata = {
+        "machine_payment": "true",
+        "mpp_sdk": f"pympp/{version('pympp')}",
+        "mpp_challenge_id": challenge.id,
+        "mpp_intent": challenge.intent,
+        "mpp_server_id": challenge.realm,
+    }
+    if credential.source:
+        metadata["mpp_client_id"] = credential.source
+    return {key: value[:500] for key, value in metadata.items()}
+
+
+def merge_metadata(
+    credential: Credential,
+    configured: dict[str, str] | None,
+    options: dict,
+) -> dict[str, str]:
+    # Preserve the historical forced flag for the existing metadata argument.
+    # The new request-scoped metadata can intentionally override any analytics.
+    return {
+        **build_analytics(credential),
+        **(configured or {}),
+        "machine_payment": "true",
+        **options.get("metadata", {}),
+    }

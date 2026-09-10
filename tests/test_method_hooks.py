@@ -58,6 +58,51 @@ def credential(challenge: Challenge) -> Credential:
     return Credential(challenge=challenge.to_echo(), payload={})
 
 
+async def test_generic_preparation_consumes_private_input_without_changing_protocol():
+    seen = []
+
+    class PreparedMethod(ThirdPartyMethod):
+        def prepare_intent(self, original, input):
+            private_value = input.pop("private_value", None)
+
+            @intent(name=original.name)
+            async def verify(credential, request):
+                seen.append(private_value)
+                return await original.verify(credential, request)
+
+            return verify, input
+
+    method = PreparedMethod("custom")
+    server = create_server(method)
+    events = []
+    server.on_payment_success(events.append)
+    for private_value in ("first", "second"):
+        unpaid = await server.charge(None, "1.50", private_value=private_value)
+        assert isinstance(unpaid, Challenge)
+        assert "private_value" not in unpaid.request
+        assert unpaid.request["transformedBy"] == "custom"
+        assert unpaid.request["amount"] == "150"
+        await server.charge(
+            credential(unpaid).to_authorization(), "1.50", private_value=private_value
+        )
+    assert seen == ["first", "second"]
+    assert all("private_value" not in event["request"] for event in events)
+    with pytest.raises(ValueError, match="unsupported compose option"):
+        server.compose((method, cast(Any, {"amount": "1.50", "typo": "bad"})))
+
+
+def test_invalid_preparation_result_is_rejected():
+    from mpp.server.method import prepare_intent
+
+    class BrokenMethod(ThirdPartyMethod):
+        def prepare_intent(self, original, input):
+            return original
+
+    method = BrokenMethod("broken")
+    with pytest.raises(TypeError, match="prepare_intent must return"):
+        prepare_intent(method, method.intents["charge"], {})
+
+
 @pytest.mark.asyncio
 async def test_can_offer_filters_normalized_composed_offers_before_challenge_events() -> None:
     seen: list[tuple[str, dict[str, Any]]] = []

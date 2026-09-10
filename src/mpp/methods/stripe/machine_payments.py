@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypedDict
 
-import mpp.methods.stripe._defaults as stripe_defaults
 import mpp.methods.stripe.intents as stripe_intents
-from mpp.events import ServerPaymentSuccessPayload
 from mpp.methods import CanOfferFn
 from mpp.methods.stripe.client import StripeMethod, spt
 from mpp.methods.tempo._defaults import CHAIN_ID, TESTNET_CHAIN_ID
@@ -18,9 +15,7 @@ if TYPE_CHECKING:
 
     from mpp.methods.tempo.client import TempoMethod
 
-logger = logging.getLogger(__name__)
-
-_SPT_MINIMUM, _RAW_UNITS_PER_CENT, _CENT_ROUNDING = 50, 10_000, 5_000
+_SPT_MINIMUM, _RAW_UNITS_PER_CENT = 50, 10_000
 
 
 class DepositAddresses(TypedDict, total=False):
@@ -79,52 +74,46 @@ class TempoPayments:
     def charge(self) -> TempoMethod:
         if self._recipient is None:
             raise ValueError("deposit_addresses['tempo'] is required for Tempo payments")
+        from mpp.methods.stripe.payment_intent_method import with_payment_intent_input
         from mpp.methods.tempo import ChargeIntent as TempoChargeIntent
         from mpp.methods.tempo import tempo
 
-        return tempo(
+        method = tempo(
             intents={"charge": TempoChargeIntent()},
             chain_id=CHAIN_ID if self._livemode else TESTNET_CHAIN_ID,
             recipient=self._recipient,
             can_offer=_minimum_amount(_RAW_UNITS_PER_CENT),
             on_payment_success=self._record_payment,
         )
+        return with_payment_intent_input(method, self._record_payment)
 
-    async def _record_payment(self, payload: ServerPaymentSuccessPayload) -> None:
-        """Record a verified Tempo payment as a Stripe PaymentIntent."""
-        reference = payload["receipt"].reference
-        amount_cents = (int(payload["request"]["amount"]) + _CENT_ROUNDING) // _RAW_UNITS_PER_CENT
-        if amount_cents < 1:
-            return
-        params: dict[str, Any] = {
-            "amount": amount_cents,
-            "currency": "usd",
-            "confirm": True,
-            "metadata": {**(self._metadata or {}), "machine_payment": "true"},
-            "payment_method_data": {"type": "crypto"},
-            "payment_method_types": ["crypto"],
-            "payment_method_options": {
-                "crypto": {
-                    "mode": "transaction_verification",
-                    "transaction_verification_options": {
-                        "network": "tempo",
-                        "transaction_hash": reference,
-                    },
-                }
-            },
-        }
-        try:
-            await stripe_intents._create_payment_intent(
-                self._client,
-                params,
-                {
-                    "headers": {"X-Request-Source": stripe_defaults.STRIPE_REQUEST_SOURCE},
-                    "idempotency_key": reference,
-                    "stripe_version": stripe_defaults.MACHINE_PAYMENTS_API_VERSION,
-                },
+    async def _record_payment(
+        self,
+        credential: Any,
+        request: dict[str, Any] | None = None,
+        receipt: Any | None = None,
+        payment_intent_options: dict[str, Any] | None = None,
+    ) -> None:
+        """Record Tempo payments; callable as the existing success callback."""
+        if request is None and isinstance(credential, dict):
+            payload = credential
+            credential, request, receipt = (
+                payload.get("credential"),
+                payload["request"],
+                payload["receipt"],
             )
-        except Exception as error:
-            logger.warning("[stripe] Tempo PI recording failed for %r: %s", reference, error)
+        assert request is not None and receipt is not None
+        from mpp.methods.stripe.crypto_payment_recorder import record_crypto_payment
+
+        await record_crypto_payment(
+            client=self._client,
+            network="tempo",
+            metadata=self._metadata,
+            credential=credential,
+            request=request,
+            receipt=receipt,
+            payment_intent_options=payment_intent_options,
+        )
 
 
 class MachinePayments:

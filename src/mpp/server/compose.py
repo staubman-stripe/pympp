@@ -14,7 +14,7 @@ from mpp._parsing import ParseError, _b64_decode
 from mpp._units import parse_units
 from mpp.errors import InvalidChallengeError, MalformedCredentialError
 from mpp.server.decorator import BodyParamsType, resolve_body_param, wrap_payment_handler
-from mpp.server.method import Method, _SupportsCanOffer
+from mpp.server.method import Method, _SupportsCanOffer, prepare_intent
 from mpp.server.verify import _authenticate_echo, _extract_payment_scheme, verify_or_challenge
 
 if TYPE_CHECKING:
@@ -308,7 +308,9 @@ def _configure_entries(
 
         if not isinstance(raw_options, Mapping):
             raise ValueError("compose() options must be a mapping")
-        unknown = raw_options.keys() - _OPTION_KEYS
+        # Methods may consume private input before the common option check.
+        _, common_options = prepare_intent(method, method.intents[intent], raw_options)
+        unknown = common_options.keys() - _OPTION_KEYS
         if unknown:
             raise ValueError(f"unsupported compose option: {sorted(unknown, key=str)[0]}")
         amount = raw_options.get("amount")
