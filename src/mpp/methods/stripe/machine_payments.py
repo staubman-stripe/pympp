@@ -13,6 +13,7 @@ from mpp.methods.tempo._defaults import CHAIN_ID, TESTNET_CHAIN_ID
 if TYPE_CHECKING:
     from stripe import StripeClient
 
+    from mpp import Credential, Receipt
     from mpp.methods.tempo.client import TempoMethod
 
 _SPT_MINIMUM, _RAW_UNITS_PER_CENT = 50, 10_000
@@ -91,21 +92,13 @@ class TempoPayments:
 
     async def _record_payment(
         self,
-        credential: Any,
-        request: dict[str, Any] | None = None,
-        receipt: Any | None = None,
-        payment_intent_options: dict[str, Any] | None = None,
-        resolved_metadata: dict[str, str] | None = None,
+        credential: Credential,
+        request: dict[str, Any],
+        receipt: Receipt,
+        payment_intent_options: dict[str, Any],
+        resolved_metadata: dict[str, str],
     ) -> None:
-        """Record Tempo payments; callable as the existing success callback."""
-        if request is None and isinstance(credential, dict):
-            payload = credential
-            credential, request, receipt = (
-                payload.get("credential"),
-                payload["request"],
-                payload["receipt"],
-            )
-        assert request is not None and receipt is not None
+        """Record a Tempo receipt with Stripe-only per-attempt inputs."""
         from mpp.methods.stripe.crypto_payment_recorder import record_crypto_payment
 
         await record_crypto_payment(

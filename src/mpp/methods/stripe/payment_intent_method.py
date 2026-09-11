@@ -29,9 +29,9 @@ def with_payment_intent_input(
     ) -> tuple[Intent | VerifiableIntent, dict[str, Any]]:
         options = prepare_options(input.pop("payment_intent_options", None))
         wrapper = (
-            _VerifiablePaymentIntentIntent(intent, options, record_payment, configured_metadata)
+            VerifiableWrappedIntent(intent, options, record_payment, configured_metadata)
             if isinstance(intent, VerifiableIntent)
-            else _PaymentIntentIntent(intent, options, record_payment, configured_metadata)
+            else WrappedIntent(intent, options, record_payment, configured_metadata)
         )
         return wrapper, input
 
@@ -39,7 +39,7 @@ def with_payment_intent_input(
     return method
 
 
-class _PaymentIntentIntent:
+class WrappedIntent:
     def __init__(
         self,
         intent: Intent | VerifiableIntent,
@@ -62,7 +62,7 @@ class _PaymentIntentIntent:
         return receipt
 
 
-class _VerifiablePaymentIntentIntent(_PaymentIntentIntent):
+class VerifiableWrappedIntent(WrappedIntent):
     async def validate(self, credential: Credential, request: dict[str, Any]):
         assert isinstance(self._intent, VerifiableIntent)
         return await self._intent.validate(credential, request)
