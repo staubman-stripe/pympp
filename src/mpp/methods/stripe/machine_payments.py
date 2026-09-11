@@ -83,9 +83,11 @@ class TempoPayments:
             chain_id=CHAIN_ID if self._livemode else TESTNET_CHAIN_ID,
             recipient=self._recipient,
             can_offer=_minimum_amount(_RAW_UNITS_PER_CENT),
-            on_payment_success=self._record_payment,
+            on_payment_success=None,
         )
-        return with_payment_intent_input(method, self._record_payment)
+        return with_payment_intent_input(
+            method, self._record_payment, configured_metadata=self._metadata
+        )
 
     async def _record_payment(
         self,
@@ -93,6 +95,7 @@ class TempoPayments:
         request: dict[str, Any] | None = None,
         receipt: Any | None = None,
         payment_intent_options: dict[str, Any] | None = None,
+        resolved_metadata: dict[str, str] | None = None,
     ) -> None:
         """Record Tempo payments; callable as the existing success callback."""
         if request is None and isinstance(credential, dict):
@@ -113,6 +116,7 @@ class TempoPayments:
             request=request,
             receipt=receipt,
             payment_intent_options=payment_intent_options,
+            resolved_metadata=resolved_metadata,
         )
 
 

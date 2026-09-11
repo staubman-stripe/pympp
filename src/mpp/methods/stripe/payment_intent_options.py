@@ -73,17 +73,7 @@ def validate_options(value: Any) -> dict[str, Any]:
         if field in options:
             options[field] = _nonempty(options[field], field)
     if "metadata" in options:
-        metadata = options["metadata"]
-        if not isinstance(metadata, Mapping) or any(
-            not isinstance(k, str) or not isinstance(v, str) for k, v in metadata.items()
-        ):
-            raise BadRequestError("metadata must contain string keys and values")
-        if len(metadata) > 50 or any(
-            not k or len(k) > 40 or "[" in k or "]" in k or len(v) > 500
-            for k, v in metadata.items()
-        ):
-            raise BadRequestError("metadata exceeds Stripe's key/value limits")
-        options["metadata"] = dict(metadata)
+        options["metadata"] = validate_metadata(options["metadata"])
     if "hooks" in options:
         hooks = _mapping(options["hooks"], {"inputs"}, "hooks")
         inputs = _mapping(hooks.get("inputs"), {"tax"}, "hooks.inputs")
@@ -91,6 +81,18 @@ def validate_options(value: Any) -> dict[str, Any]:
         calculation = _nonempty(tax.get("calculation"), "hooks.inputs.tax.calculation")
         options["hooks"] = {"inputs": {"tax": {"calculation": calculation}}}
     return options
+
+
+def validate_metadata(value: Any) -> dict[str, str]:
+    if not isinstance(value, Mapping) or any(
+        not isinstance(k, str) or not isinstance(v, str) for k, v in value.items()
+    ):
+        raise BadRequestError("metadata must contain string keys and values")
+    if len(value) > 50 or any(
+        not k or len(k) > 40 or "[" in k or "]" in k or len(v) > 500 for k, v in value.items()
+    ):
+        raise BadRequestError("metadata exceeds Stripe's key/value limits")
+    return dict(value)
 
 
 def prepare_options(value: PaymentIntentInput) -> PaymentIntentInput:

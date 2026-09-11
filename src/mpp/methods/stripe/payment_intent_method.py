@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, cast
 
 from mpp import Credential, Receipt
+from mpp.methods.stripe.analytics import merge_metadata
 from mpp.methods.stripe.payment_intent_options import (
     PaymentIntentInput,
     prepare_options,
@@ -13,32 +14,28 @@ from mpp.methods.stripe.payment_intent_options import (
 )
 from mpp.server.intent import Intent, VerifiableIntent, broadcast_credential
 
-RecordPayment = Callable[[Credential, dict[str, Any], Receipt, dict[str, Any]], Awaitable[None]]
+RecordPayment = Callable[
+    [Credential, dict[str, Any], Receipt, dict[str, Any], dict[str, str]], Awaitable[None]
+]
 
 
-def with_payment_intent_input(method: Any, record_payment: RecordPayment) -> Any:
+def with_payment_intent_input(
+    method: Any, record_payment: RecordPayment, configured_metadata: Mapping[str, str] | None = None
+) -> Any:
     """Decorate a method in place without changing its public concrete type."""
-
-    built_in_callback = method.on_payment_success
 
     def prepare_intent(
         intent: Intent | VerifiableIntent, input: dict[str, Any]
     ) -> tuple[Intent | VerifiableIntent, dict[str, Any]]:
         options = prepare_options(input.pop("payment_intent_options", None))
-        # Retain the existing ability to replace the event callback: in that
-        # case generic event dispatch owns it and this wrapper does no recording.
-        callback = record_payment if method.on_payment_success is built_in_callback else None
         wrapper = (
-            _VerifiablePaymentIntentIntent(intent, options, callback)
+            _VerifiablePaymentIntentIntent(intent, options, record_payment, configured_metadata)
             if isinstance(intent, VerifiableIntent)
-            else _PaymentIntentIntent(intent, options, callback)
+            else _PaymentIntentIntent(intent, options, record_payment, configured_metadata)
         )
         return wrapper, input
 
     method.prepare_intent = prepare_intent
-    # Generic server plumbing uses this only to avoid duplicating the existing
-    # success callback: the prepared intent invokes it after settlement.
-    method._handled_payment_success_callback = built_in_callback
     return method
 
 
@@ -47,27 +44,21 @@ class _PaymentIntentIntent:
         self,
         intent: Intent | VerifiableIntent,
         options: PaymentIntentInput,
-        record_payment: RecordPayment | None,
+        record_payment: RecordPayment,
+        configured_metadata: Mapping[str, str] | None,
     ) -> None:
         self.name = intent.name
         self._intent = intent
         self._options = options
         self._record_payment = record_payment
-
-    async def _record(
-        self, credential: Credential, request: dict[str, Any], receipt: Receipt
-    ) -> Receipt:
-        options = await resolve_options(self._options, credential, request)
-        if self._record_payment is not None:
-            await self._record_payment(credential, request, receipt, options)
-        return receipt
+        self._configured_metadata = configured_metadata
 
     async def verify(self, credential: Credential, request: dict[str, Any]) -> Receipt:
         # Legacy rails have no non-mutating validation to run before resolution.
         options = await resolve_options(self._options, credential, request)
+        metadata = merge_metadata(credential, self._configured_metadata, options)
         receipt = await cast(Intent, self._intent).verify(credential, request)
-        if self._record_payment is not None:
-            await self._record_payment(credential, request, receipt, options)
+        await self._record_payment(credential, request, receipt, options, metadata)
         return receipt
 
 
@@ -80,10 +71,10 @@ class _VerifiablePaymentIntentIntent(_PaymentIntentIntent):
         # Server lifecycle has already run validate. Resolve immediately before
         # the terminal operation so errors prevent settlement.
         options = await resolve_options(self._options, credential, request)
+        metadata = merge_metadata(credential, self._configured_metadata, options)
         assert isinstance(self._intent, VerifiableIntent)
         receipt = await self._intent.broadcast(credential, request)
-        if self._record_payment is not None:
-            await self._record_payment(credential, request, receipt, options)
+        await self._record_payment(credential, request, receipt, options, metadata)
         return receipt
 
     async def verify(self, credential: Credential, request: dict[str, Any]) -> Receipt:

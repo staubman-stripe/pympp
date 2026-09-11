@@ -286,4 +286,4 @@ async def test_replacing_the_existing_tempo_callback_preserves_event_behavior():
         payment_intent_options={"metadata": {"order": "123"}},
     )
     callback.assert_awaited_once()
-    assert not client.payment_intents.calls
+    assert client.payment_intents.calls[0][0]["metadata"]["order"] == "123"

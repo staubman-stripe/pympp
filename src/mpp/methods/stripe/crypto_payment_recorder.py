@@ -7,7 +7,7 @@ from typing import Any
 
 from mpp import Credential, Receipt
 from mpp.methods.stripe import _defaults
-from mpp.methods.stripe.analytics import build_analytics, merge_metadata
+from mpp.methods.stripe.analytics import build_analytics
 from mpp.methods.stripe.intents import _create_payment_intent
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,7 @@ async def record_crypto_payment(
     request: dict[str, Any],
     receipt: Receipt,
     payment_intent_options: dict[str, Any] | None = None,
+    resolved_metadata: dict[str, str] | None = None,
 ) -> None:
     """Record a settled crypto transfer; failure cannot undo settlement."""
     reference = receipt.reference
@@ -51,16 +52,12 @@ async def record_crypto_payment(
                 },
             },
         }
-        resolved_metadata = (
-            merge_metadata(credential, metadata, options)
-            if credential
-            else {
-                **analytics,
-                **(metadata or {}),
-                "machine_payment": "true",
-                **options.get("metadata", {}),
-            }
-        )
+        resolved_metadata = resolved_metadata or {
+            **analytics,
+            **(metadata or {}),
+            "machine_payment": "true",
+            **options.get("metadata", {}),
+        }
         params = {**required, **options, "metadata": resolved_metadata}
         try:
             await _create(client, params, reference)

@@ -167,10 +167,6 @@ class Mpp:
         handler = method.on_payment_success if isinstance(method, _SupportsPaymentSuccess) else None
         if handler is None:
             return
-        # Some methods handle their built-in callback inside a prepared intent.
-        # Keep the callable available without registering it a second time.
-        if handler is getattr(method, "_handled_payment_success_callback", None):
-            return
         if not callable(handler):
             raise ValueError("on_payment_success must be callable")
 

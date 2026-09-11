@@ -6,7 +6,6 @@ from typing import Any, cast
 import pytest
 
 from mpp import Challenge, Credential, Receipt
-from mpp.events import ServerPaymentSuccessPayload
 from mpp.methods.stripe import MachinePayments, create
 from mpp.methods.stripe import _defaults as stripe_defaults
 from mpp.methods.tempo._defaults import CHAIN_ID, PATH_USD, TESTNET_CHAIN_ID, USDC
@@ -154,53 +153,3 @@ async def test_spt_uses_pinned_explicit_request_shape() -> None:
         "max_network_retries": 0,
         "stripe_version": stripe_defaults.MACHINE_PAYMENTS_API_VERSION,
     }
-
-
-def success_payload(reference: str, amount: int) -> ServerPaymentSuccessPayload:
-    receipt = Receipt.success(reference, method="tempo")
-    return cast(Any, {"receipt": receipt, "request": {"amount": str(amount)}})
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("top_level_only", "sync"), [(False, False), (True, False), (True, True)])
-async def test_tempo_hook_records_verified_payment_and_metadata(
-    top_level_only: bool, sync: bool
-) -> None:
-    client, payments = make_payments(
-        client=FakeStripeClient(top_level_only=top_level_only, sync=sync),
-        deposit_addresses={"tempo": TEMPO_ADDRESS},
-        metadata={"order": "123"},
-    )
-    handler = payments.tempo.charge().on_payment_success
-    assert handler is not None
-
-    for amount in (4_999, 5_000, 15_000):
-        await cast(Any, handler)(success_payload(f"0x{amount}", amount))
-
-    assert [params["amount"] for params, _ in client.payment_intents.calls] == [1, 2]
-    params, options = client.payment_intents.calls[-1]
-    assert params["metadata"] == {"machine_payment": "true", "order": "123"}
-    assert params["payment_method_options"]["crypto"] == {
-        "mode": "transaction_verification",
-        "transaction_verification_options": {
-            "network": "tempo",
-            "transaction_hash": "0x15000",
-        },
-    }
-    assert options == {
-        "headers": {"X-Request-Source": stripe_defaults.STRIPE_REQUEST_SOURCE},
-        "idempotency_key": "0x15000",
-        "max_network_retries": 0,
-        "stripe_version": stripe_defaults.MACHINE_PAYMENTS_API_VERSION,
-    }
-
-
-@pytest.mark.asyncio
-async def test_tempo_recording_is_best_effort(caplog: pytest.LogCaptureFixture) -> None:
-    client, payments = make_payments(deposit_addresses={"tempo": TEMPO_ADDRESS})
-    client.payment_intents.error = RuntimeError("unavailable")
-    handler = payments.tempo.charge().on_payment_success
-
-    await cast(Any, handler)(success_payload("0xfailure", 10_000))
-
-    assert "failed to record crypto payment" in caplog.text and "0xfailure" in caplog.text

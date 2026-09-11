@@ -1,8 +1,10 @@
 """Shared Stripe analytics and backward-compatible metadata merging."""
 
+from collections.abc import Mapping
 from importlib.metadata import version
 
 from mpp import Credential
+from mpp.methods.stripe.payment_intent_options import validate_metadata
 
 
 def build_analytics(credential: Credential) -> dict[str, str]:
@@ -21,14 +23,16 @@ def build_analytics(credential: Credential) -> dict[str, str]:
 
 def merge_metadata(
     credential: Credential,
-    configured: dict[str, str] | None,
+    configured: Mapping[str, str] | None,
     options: dict,
 ) -> dict[str, str]:
     # Preserve the historical forced flag for the existing metadata argument.
     # The new request-scoped metadata can intentionally override any analytics.
-    return {
-        **build_analytics(credential),
-        **(configured or {}),
-        "machine_payment": "true",
-        **options.get("metadata", {}),
-    }
+    return validate_metadata(
+        {
+            **build_analytics(credential),
+            **(configured or {}),
+            "machine_payment": "true",
+            **options.get("metadata", {}),
+        }
+    )
