@@ -9,6 +9,7 @@ import time
 import warnings
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from importlib.metadata import version
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -661,11 +662,12 @@ class TestChargeIntent:
 
         params = captured[0][0][0]
         metadata = params["metadata"]
-        assert metadata["mpp_intent"] == "charge"
-        assert metadata["mpp_challenge_id"] == "test-challenge-id"
-        assert metadata["mpp_server_id"] == "api.example.com"
-        assert metadata["mpp_client_id"] == "stripe:test"
-        assert metadata["machine_payment"] == "true"
+        assert metadata == {
+            "machine_payment": "true",
+            "mpp_sdk": f"pympp/{version('pympp')}",
+            "mpp_challenge_id": "test-challenge-id",
+            "mpp_intent": "charge",
+        }
 
     @pytest.mark.asyncio
     async def test_idempotency_key(self):

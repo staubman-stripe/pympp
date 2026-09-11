@@ -14,10 +14,7 @@ def build_analytics(credential: Credential) -> dict[str, str]:
         "mpp_sdk": f"pympp/{version('pympp')}",
         "mpp_challenge_id": challenge.id,
         "mpp_intent": challenge.intent,
-        "mpp_server_id": challenge.realm,
     }
-    if credential.source:
-        metadata["mpp_client_id"] = credential.source
     return {key: value[:500] for key, value in metadata.items()}
 
 
