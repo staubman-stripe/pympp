@@ -239,6 +239,27 @@ async def test_raw_http_spt_supports_options_without_owning_injected_client():
         assert intent._http_client is http and not http.is_closed
 
 
+async def test_raw_http_spt_failure_does_not_expose_private_options():
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                400, json={"error": {"message": "No such customer: cus_private"}}
+            )
+        )
+    ) as http:
+        intent = ChargeIntent(secret_key="sk_test", http_client=http)
+        _, payments = make_payments()
+        method = payments.spt.charge()
+        method.intents["charge"] = intent
+        server = Mpp.create(method=method, realm="example.com", secret_key="secret")
+        challenge = await issue(server, OPTIONS)
+        with pytest.raises(VerificationFailedError) as error:
+            await server.charge(
+                credential(challenge).to_authorization(), "0.50", payment_intent_options=OPTIONS
+            )
+        assert "cus_private" not in str(error.value)
+
+
 async def test_legacy_crypto_rail_remains_supported():
     client, payments = make_payments(deposit_addresses={"tempo": TEMPO_ADDRESS})
     method, calls = payments.tempo.charge(), []

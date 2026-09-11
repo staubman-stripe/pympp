@@ -39,6 +39,7 @@ class ComposeOptions(TypedDict, total=False):
     chain_id: int | None
     extra: dict[str, str] | None
     meta: dict[str, str] | None
+    payment_intent_options: object
 
 
 ComposeEntry: TypeAlias = tuple[Method | str, ComposeOptions]
@@ -52,7 +53,7 @@ class ComposedChallenges:
 
 
 ComposedResult: TypeAlias = ComposedChallenges | tuple[Credential, Receipt]
-_OPTION_KEYS = frozenset(ComposeOptions.__annotations__)
+_OPTION_KEYS = frozenset(ComposeOptions.__annotations__) - {"payment_intent_options"}
 
 
 @dataclass

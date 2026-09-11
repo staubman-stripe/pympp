@@ -305,14 +305,17 @@ class ChargeIntent:
         )
 
         if not response.is_success:
-            detail = None
-            try:
-                err = response.json().get("error", {})
-                detail = err.get("message") or err.get("code")
-            except Exception:
-                detail = response.text[:200] if response.text else None
+            if not payment_options:
+                try:
+                    error = response.json().get("error", {})
+                    detail = error.get("message") or error.get("code")
+                except Exception:
+                    detail = response.text[:200] if response.text else None
+                raise VerificationFailedError(
+                    detail or f"Stripe PaymentIntent failed (HTTP {response.status_code})"
+                )
             raise VerificationFailedError(
-                detail or f"Stripe PaymentIntent failed (HTTP {response.status_code})"
+                f"Stripe PaymentIntent failed (HTTP {response.status_code})"
             )
 
         result = response.json()
