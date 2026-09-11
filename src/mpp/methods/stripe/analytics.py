@@ -26,13 +26,10 @@ def merge_metadata(
     configured: Mapping[str, str] | None,
     options: dict,
 ) -> dict[str, str]:
-    # Preserve the historical forced flag for the existing metadata argument.
-    # The new request-scoped metadata can intentionally override any analytics.
     return validate_metadata(
         {
             **build_analytics(credential),
             **(configured or {}),
-            "machine_payment": "true",
             **options.get("metadata", {}),
         }
     )
